@@ -23,6 +23,8 @@ import dayjs from 'dayjs';
 import i18n from '@/i18n';
 import { sinks } from '@/plugins/sinks';
 import request from '@/core/utils/request';
+import { CSVLink } from 'react-csv';
+import audit from '@/ui/pages/GroupDetail/Audit/index';
 
 export const timeStaticsDimList = [
   {
@@ -93,22 +95,89 @@ export const toChartData = (source, sourceDataMap) => {
 };
 
 export const toTableData = (source, sourceDataMap) => {
-  return Object.keys(sourceDataMap)
+  const map = Object.keys(sourceDataMap)
     .reverse()
     .map(logTs => ({
       ...sourceDataMap[logTs],
       logTs,
     }));
+  let sourceData = getSourceDataWithPercent(source, map);
+  return getSourceDataWithCommas(sourceData);
 };
 
-export const getFormContent = (inlongGroupId, initialValues, onSearch, onDataStreamSuccess) => [
+export const getSourceDataWithPercent = (sourceKeys, sourceMap) => {
+  const auditIds = Array.from(
+    new Set(Object.values(sourceKeys).map(({ auditId }) => parseInt(auditId))),
+  );
+  return sourceMap.map(source => {
+    for (const auditId of auditIds) {
+      if (!(auditId in source)) {
+        source[auditId] = 0;
+      }
+    }
+    let newSource = {};
+    const keys = Object.keys(source).filter(key => key !== 'logTs');
+    const firstKey = keys[0];
+    const firstValue = source[firstKey];
+    newSource[firstKey] = firstValue.toString();
+    for (let key of keys.slice(1)) {
+      if (key !== 'logTs') {
+        let diff = getDiff(firstValue, source[key]);
+        newSource[key] = `${source[key]} (${diff})`;
+      }
+    }
+    newSource['logTs'] = source['logTs'];
+    return newSource;
+  });
+};
+
+export const getDiff = (first, current) => {
+  if (first === 0) {
+    return first.toFixed(4) + '%';
+  }
+  let result;
+  const diff = (current / first - 1) * 100;
+  result = diff > 0 ? '+' + diff.toFixed(4) + '%' : diff.toFixed(4) + '%';
+  return result;
+};
+
+export const getSourceDataWithCommas = sourceData => {
+  sourceData.map(source => {
+    for (const key in source) {
+      if (key !== 'logTs') {
+        let parts = source[key].split(' ');
+        let numberPart = parts[0];
+        let percentPart = parts[1] || '';
+        let number = parseInt(numberPart, 10);
+        let formattedNumber = number.toLocaleString();
+        source[key] = formattedNumber + ' ' + percentPart;
+      }
+    }
+  });
+  return sourceData;
+};
+let endTimeVisible = true;
+export const getFormContent = (
+  inlongGroupId,
+  initialValues,
+  onSearch,
+  onDataStreamSuccess,
+  sourceData,
+  csvData,
+  fileName,
+  setInlongStreamID,
+  inlongStreamId,
+) => [
   {
     type: 'select',
-    label: i18n.t('pages.GroupDetail.Audit.DataStream'),
+    label: i18n.t('pages.ModuleAudit.config.InlongStreamId'),
     name: 'inlongStreamId',
     props: {
       dropdownMatchSelectWidth: false,
       showSearch: true,
+      onChange: (value, option) => {
+        setInlongStreamID(value);
+      },
       options: {
         requestAuto: true,
         requestTrigger: ['onOpen', 'onSearch'],
@@ -151,7 +220,7 @@ export const getFormContent = (inlongGroupId, initialValues, onSearch, onDataStr
             pageNum: 1,
             pageSize: 100,
             inlongGroupId,
-            inlongStreamId: values.inlongStreamId,
+            inlongStreamId: inlongStreamId,
           },
         }),
         requestParams: {
@@ -161,6 +230,9 @@ export const getFormContent = (inlongGroupId, initialValues, onSearch, onDataStr
               value: item.id,
             })) || [],
         },
+      },
+      filterOption: (keyword: string, option: { label: any }) => {
+        return (option?.label ?? '').toLowerCase().includes(keyword.toLowerCase());
       },
     }),
   },
@@ -179,20 +251,42 @@ export const getFormContent = (inlongGroupId, initialValues, onSearch, onDataStr
     label: i18n.t('pages.GroupDetail.Audit.EndDate'),
     name: 'endDate',
     initialValue: dayjs(initialValues.endDate),
+    rules: [
+      { required: true },
+      ({ getFieldValue }) => ({
+        validator(_, value) {
+          const dim = initialValues.timeStaticsDim;
+          if (dim === 'MINUTE') {
+            return Promise.resolve();
+          }
+          const timeDiff = value - getFieldValue('startDate');
+          if (timeDiff >= 0) {
+            const isHourDiff = dim === 'HOUR' && timeDiff < 1000 * 60 * 60 * 24 * 3;
+            const isDayDiff = dim === 'DAY' && timeDiff < 1000 * 60 * 60 * 24 * 7;
+            if (isHourDiff || isDayDiff) {
+              return Promise.resolve();
+            }
+          }
+          return Promise.reject(new Error(i18n.t('pages.GroupDetail.Audit.DatepickerRule')));
+        },
+      }),
+    ],
     props: {
       allowClear: false,
       format: 'YYYY-MM-DD',
+      disabled: initialValues.timeStaticsDim === 'MINUTE',
       disabledDate: current => {
         const start = dayjs(initialValues.startDate);
         const dim = initialValues.timeStaticsDim;
-        if (dim === 'HOUR' || dim === 'DAY') {
-          const tooLate = current && current <= start.endOf('day');
-          const tooEarly = start && current > start.add(7, 'd').endOf('day');
-          return tooLate || tooEarly;
+        const tooEarly = current < start.add(-1, 'd').endOf('day');
+        let tooLate;
+        if (dim === 'HOUR') {
+          tooLate = current >= start.add(2, 'd').endOf('day');
         }
-        const tooLate = current && current >= start.endOf('day');
-        const tooEarly = start && current < start.add(-1, 'd').endOf('day');
-        return tooLate || tooEarly;
+        if (dim === 'DAY') {
+          tooLate = current >= start.add(6, 'd').endOf('day');
+        }
+        return current && (tooLate || tooEarly);
       },
     },
   },
@@ -225,14 +319,25 @@ export const getFormContent = (inlongGroupId, initialValues, onSearch, onDataStr
           return request('/audit/getAuditBases');
         },
         requestParams: {
-          formatResult: result =>
-            result?.map(item => ({
-              label: item.nameInChinese,
-              value: item.auditId,
-            })) || [],
+          formatResult: result => {
+            return result?.reduce((accumulator, item) => {
+              const existingItem = accumulator.find(
+                (i: { value: any }) => i.value === item.auditId,
+              );
+              if (!existingItem) {
+                accumulator.push({
+                  label: i18n?.language === 'cn' ? item.nameInChinese : item.nameInEnglish,
+                  value: item.auditId,
+                });
+              }
+              return accumulator;
+            }, []);
+          },
         },
       },
-      filterOption: (keyword, option) => option.label.includes(keyword),
+      filterOption: (keyword: string, option: { label: any }) => {
+        return (option?.label ?? '').toLowerCase().includes(keyword.toLowerCase());
+      },
     },
   },
   {
@@ -242,18 +347,37 @@ export const getFormContent = (inlongGroupId, initialValues, onSearch, onDataStr
       </Button>
     ),
   },
+  {
+    type: (
+      <Button type="primary" disabled={!(sourceData.length > 0)}>
+        <CSVLink data={csvData} filename={fileName}>
+          {i18n.t('pages.GroupDetail.Audit.ExportCSV')}
+        </CSVLink>
+      </Button>
+    ),
+  },
 ];
 
-export const getTableColumns = source => {
+export const getTableColumns = (source, dim) => {
   const data = source.map(item => ({
     title: item.auditName,
     dataIndex: item.auditId,
-    render: text => text || 0,
+    render: text => {
+      if (text?.includes('+')) {
+        return <span style={{ color: 'red' }}>{text}</span>;
+      } else if (text?.includes('-')) {
+        return <span style={{ color: 'green' }}>{text}</span>;
+      }
+      return <span>{text}</span>;
+    },
   }));
   return [
     {
       title: i18n.t('pages.GroupDetail.Audit.Time'),
       dataIndex: 'logTs',
+      render: text => {
+        return dim === 'MINUTE' ? dayjs(text).format('HH:mm') : text;
+      },
     },
   ].concat(data);
 };

@@ -32,11 +32,17 @@ public interface CommandExecutor {
     CommandResult modifyConfig(AgentClusterNodeRequest clusterNodeRequest, Map<String, String> configMap,
             String confPath) throws Exception;
 
-    CommandResult tarPackage(AgentClusterNodeRequest clusterNodeRequest, String fileName, String tarPath)
-            throws Exception;
+    CommandResult tarPackage(AgentClusterNodeRequest clusterNodeRequest, String fileName, String sourcePath,
+            String tarPath) throws Exception;
 
     CommandResult downLoadPackage(AgentClusterNodeRequest clusterNodeRequest, String downLoadPath, String downLoadUrl)
             throws Exception;
 
     CommandResult mkdir(AgentClusterNodeRequest clusterNodeRequest, String path) throws Exception;
+
+    CommandResult rmDir(AgentClusterNodeRequest clusterNodeRequest, String path) throws Exception;
+
+    CommandResult cpDir(AgentClusterNodeRequest clusterNodeRequest, String sourcePath, String targetPath)
+            throws Exception;
+
 }

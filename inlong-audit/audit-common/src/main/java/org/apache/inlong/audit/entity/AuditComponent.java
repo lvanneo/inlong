@@ -19,7 +19,7 @@ package org.apache.inlong.audit.entity;
 
 public enum AuditComponent {
 
-    AGENT("Agent"), DATAPROXY("DataProxy"), SORT("Sort"), COMMON_AUDIT("Common");
+    AGENT("Agent"), DATAPROXY("DataProxy"), SORT("Sort");
     private final String component;
 
     /**

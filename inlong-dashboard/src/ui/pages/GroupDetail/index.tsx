@@ -54,6 +54,10 @@ const Comp: React.FC = () => {
     if (!hasOpened(current)) addOpened(current);
   }, [current, addOpened, hasOpened]);
 
+  useEffect(() => {
+    setId(groupId);
+  }, [groupId]);
+
   const { data } = useRequest(`/group/get/${id}`, {
     ready: !!id && !mqType,
     refreshDeps: [id],
@@ -64,7 +68,6 @@ const Comp: React.FC = () => {
     ready: !!id,
     refreshDeps: [id],
     onSuccess: result => {
-      console.log('res', result, getLocalStorage('tenant')?.['name']);
       if (getLocalStorage('tenant')?.['name'] !== result) {
         setLocalStorage({ name: result });
         message.success(t('components.Layout.Tenant.Success'));

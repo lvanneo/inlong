@@ -17,9 +17,9 @@
 
 package org.apache.inlong.sort.mysql;
 
+import org.apache.inlong.sort.base.metric.CdcExactlyMetric;
 import org.apache.inlong.sort.base.metric.MetricOption;
 import org.apache.inlong.sort.base.metric.MetricsCollector;
-import org.apache.inlong.sort.base.metric.SourceMetricData;
 
 import com.ververica.cdc.debezium.DebeziumDeserializationSchema;
 import com.ververica.cdc.debezium.table.AppendMetadataCollector;
@@ -53,8 +53,6 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -73,8 +71,6 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * Copy from com.ververica:flink-connector-mysql-cdc-2.3.0
  */
 public final class RowDataDebeziumDeserializeSchema implements DebeziumDeserializationSchema<RowData> {
-
-    private final static Logger LOG = LoggerFactory.getLogger(RowDataDebeziumDeserializeSchema.class);
 
     private static final long serialVersionUID = 2L;
 
@@ -106,7 +102,7 @@ public final class RowDataDebeziumDeserializeSchema implements DebeziumDeseriali
 
     /** Changelog Mode to use for encoding changes in Flink internal data structure. */
     private final DebeziumChangelogMode changelogMode;
-    private SourceMetricData sourceMetricData;
+    private CdcExactlyMetric cdcExactlyMetric;
     private final MetricOption metricOption;
 
     /** Returns a builder to build {@link RowDataDebeziumDeserializeSchema}. */
@@ -141,21 +137,19 @@ public final class RowDataDebeziumDeserializeSchema implements DebeziumDeseriali
         Envelope.Operation op = Envelope.operationFor(record);
         Struct value = (Struct) record.value();
         Schema valueSchema = record.valueSchema();
+        if (cdcExactlyMetric != null) {
+            out = createMetricsCollector(record, out);
+        }
+
         if (op == Envelope.Operation.CREATE || op == Envelope.Operation.READ) {
             GenericRowData insert = extractAfterRow(value, valueSchema);
             validator.validate(insert, RowKind.INSERT);
             insert.setRowKind(RowKind.INSERT);
-            if (sourceMetricData != null) {
-                out = createMetricsCollector(record, out);
-            }
             emit(record, insert, out);
         } else if (op == Envelope.Operation.DELETE) {
             GenericRowData delete = extractBeforeRow(value, valueSchema);
             validator.validate(delete, RowKind.DELETE);
             delete.setRowKind(RowKind.DELETE);
-            if (sourceMetricData != null) {
-                out = createMetricsCollector(record, out);
-            }
             emit(record, delete, out);
         } else {
             if (changelogMode == DebeziumChangelogMode.ALL) {
@@ -168,9 +162,6 @@ public final class RowDataDebeziumDeserializeSchema implements DebeziumDeseriali
             GenericRowData after = extractAfterRow(value, valueSchema);
             validator.validate(after, RowKind.UPDATE_AFTER);
             after.setRowKind(RowKind.UPDATE_AFTER);
-            if (sourceMetricData != null) {
-                out = createMetricsCollector(record, out);
-            }
             emit(record, after, out);
         }
     }
@@ -182,7 +173,7 @@ public final class RowDataDebeziumDeserializeSchema implements DebeziumDeseriali
      * @return metrics collector
      */
     private Collector<RowData> createMetricsCollector(SourceRecord record, Collector<RowData> out) {
-        MetricsCollector<RowData> collector = new MetricsCollector<>(out, sourceMetricData);
+        MetricsCollector<RowData> collector = new MetricsCollector<>(out, cdcExactlyMetric);
         collector.resetTimestamp((Long) ((Struct) record.value()).get(FieldName.TIMESTAMP));
         return collector;
     }
@@ -194,7 +185,7 @@ public final class RowDataDebeziumDeserializeSchema implements DebeziumDeseriali
      */
     public void initSourceMetricData() {
         if (metricOption != null) {
-            this.sourceMetricData = new SourceMetricData(metricOption);
+            this.cdcExactlyMetric = new CdcExactlyMetric(metricOption);
         }
     }
 
@@ -225,6 +216,23 @@ public final class RowDataDebeziumDeserializeSchema implements DebeziumDeseriali
         return resultTypeInfo;
     }
 
+    public void flushAudit() {
+        if (cdcExactlyMetric != null) {
+            cdcExactlyMetric.flushAudit();
+        }
+    }
+
+    public void updateCurrentCheckpointId(long checkpointId) {
+        if (cdcExactlyMetric != null) {
+            cdcExactlyMetric.updateCurrentCheckpointId(checkpointId);
+        }
+    }
+
+    public void updateLastCheckpointId(long checkpointId) {
+        if (cdcExactlyMetric != null) {
+            cdcExactlyMetric.updateLastCheckpointId(checkpointId);
+        }
+    }
     // -------------------------------------------------------------------------------------
     // Builder
     // -------------------------------------------------------------------------------------
